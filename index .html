@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Chronomètre</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="theme-color" content="#000000">
+    <style>
+        *, *::before, *::after {
+            margin: 0; padding: 0; box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+        body {
+            color: #fff;
+            font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100dvh;
+        }
+
+        /* ─── TIMER ZONE ──────────────────────────────────── */
+        .timer-zone {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+            -webkit-touch-callout: none;
+        }
+
+        .time-wrap {
+            display: flex;
+            align-items: baseline;
+        }
+
+        #mainTime {
+            font-size: clamp(68px, 21vw, 100px);
+            font-weight: 200;
+            letter-spacing: -3px;
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+        }
+
+        .sep {
+            font-size: clamp(68px, 21vw, 100px);
+            font-weight: 200;
+            color: #ccc;
+            margin: 0 2px;
+        }
+
+        #csTime {
+            font-size: clamp(44px, 14vw, 66px);
+            font-weight: 200;
+            letter-spacing: -1px;
+            font-variant-numeric: tabular-nums;
+            color: #bbb;
+        }
+
+        /* ─── BUTTONS ─────────────────────────────────────── */
+        .btn-row {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 16px 40px 54px;
+            flex-shrink: 0;
+        }
+
+        .btn {
+            width: 82px; height: 82px;
+            border-radius: 50%;
+            border: none;
+            font-size: 16px;
+            font-weight: 400;
+            cursor: pointer;
+            outline: none;
+            position: relative;
+            transition: filter .1s;
+        }
+        .btn:active { filter: brightness(0.75); }
+        .btn::after {
+            content: '';
+            position: absolute;
+            inset: -5px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255,255,255,0.09);
+            pointer-events: none;
+        }
+
+        #lapBtn {
+            background: #1c1c1e;
+            color: #636366;
+        }
+        #lapBtn.on {
+            color: #fff;
+        }
+
+        #startBtn {
+            background: #122b14;
+            color: #32d74b;
+            font-weight: 500;
+        }
+        #startBtn.stop-mode {
+            background: #2e1111;
+            color: #ff453a;
+        }
+
+        /* ─── LAP SEPARATOR LINE ──────────────────────────── */
+        .divider {
+            height: 1px;
+            background: #1c1c1e;
+            margin: 0 20px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Zone timer (tap = force stop) -->
+<div class="timer-zone" id="timerZone">
+    <div class="time-wrap">
+        <span id="mainTime">00:00</span>
+        <span class="sep">,</span>
+        <span id="csTime">00</span>
+    </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- Boutons -->
+<div class="btn-row">
+    <button class="btn" id="lapBtn">Réinitialiser</button>
+    <button class="btn" id="startBtn">Démarrer</button>
+</div>
+
+<script>
+'use strict';
+
+// ================================================================
+//  STACK MNEMONICA — Juan Tamariz
+//  v = valeur : A=1, 2..10, Valet=11, Dame=12, Roi=13
+//  s = symbole de la couleur (pour référence / debug)
+//
+//  Positions  1-25 : confirmées ✓
+//  Positions 26-52 : à vérifier par le magicien ⚠️
+// ================================================================
+const STACK = [
+//  pos  valeur  couleur      carte
+    {v:4,  s:'♣'}, //  1   4 de Trèfle
+    {v:2,  s:'♥'}, //  2   2 de Cœur
+    {v:7,  s:'♦'}, //  3   7 de Carreau
+    {v:3,  s:'♣'}, //  4   3 de Trèfle
+    {v:4,  s:'♥'}, //  5   4 de Cœur
+    {v:6,  s:'♦'}, //  6   6 de Carreau
+    {v:1,  s:'♠'}, //  7   As de Pique
+    {v:5,  s:'♥'}, //  8   5 de Cœur
+    {v:9,  s:'♠'}, //  9   9 de Pique
+    {v:2,  s:'♠'}, // 10   2 de Pique
+    {v:12, s:'♥'}, // 11   Dame de Cœur
+    {v:3,  s:'♦'}, // 12   3 de Carreau
+    {v:12, s:'♣'}, // 13   Dame de Trèfle
+    {v:8,  s:'♥'}, // 14   8 de Cœur
+    {v:6,  s:'♠'}, // 15   6 de Pique
+    {v:5,  s:'♠'}, // 16   5 de Pique
+    {v:9,  s:'♥'}, // 17   9 de Cœur
+    {v:13, s:'♣'}, // 18   Roi de Trèfle
+    {v:3,  s:'♠'}, // 19   3 de Pique
+    {v:8,  s:'♠'}, // 20   8 de Pique      ← 8s + Pique = 20 ✓
+    {v:11, s:'♥'}, // 21   Valet de Cœur
+    {v:2,  s:'♦'}, // 22   2 de Carreau
+    {v:6,  s:'♥'}, // 23   6 de Cœur
+    {v:10, s:'♣'}, // 24   10 de Trèfle
+    {v:5,  s:'♦'}, // 25   5 de Carreau
+    {v:13, s:'♦'}, // 26   Roi de Carreau
+    {v:2,  s:'♣'}, // 27   2 de Trèfle
+    {v:3,  s:'♥'}, // 28   3 de Cœur
+    {v:8,  s:'♦'}, // 29   8 de Carreau
+    {v:5,  s:'♣'}, // 30   5 de Trèfle
+    {v:13, s:'♠'}, // 31   Roi de Pique
+    {v:11, s:'♦'}, // 32   Valet de Carreau
+    {v:8,  s:'♣'}, // 33   8 de Trèfle
+    {v:10, s:'♠'}, // 34   10 de Pique
+    {v:13, s:'♥'}, // 35   Roi de Cœur
+    {v:11, s:'♣'}, // 36   Valet de Trèfle
+    {v:7,  s:'♠'}, // 37   7 de Pique
+    {v:10, s:'♥'}, // 38   10 de Cœur
+    {v:1,  s:'♦'}, // 39   As de Carreau
+    {v:4,  s:'♠'}, // 40   4 de Pique
+    {v:7,  s:'♥'}, // 41   7 de Cœur
+    {v:4,  s:'♦'}, // 42   4 de Carreau
+    {v:1,  s:'♣'}, // 43   As de Trèfle
+    {v:9,  s:'♣'}, // 44   9 de Trèfle
+    {v:11, s:'♠'}, // 45   Valet de Pique
+    {v:12, s:'♦'}, // 46   Dame de Carreau
+    {v:7,  s:'♣'}, // 47   7 de Trèfle
+    {v:12, s:'♠'}, // 48   Dame de Pique
+    {v:10, s:'♦'}, // 49   10 de Carreau
+    {v:6,  s:'♣'}, // 50   6 de Trèfle
+    {v:1,  s:'♥'}, // 51   As de Cœur
+    {v:9,  s:'♦'}, // 52   9 de Carreau
+];
+
+// ── Familles : coin de l'écran → famille (aucun retour visuel) ─
+//  Tap avant démarrage dans un des 4 coins invisibles :
+//  Haut-gauche = ♠ · Haut-droit = ♥ · Bas-gauche = ♣ · Bas-droit = ♦
+const SUITS = {
+    topLeft:     { sym: '♠' },  // Pique
+    topRight:    { sym: '♥' },  // Cœur
+    bottomLeft:  { sym: '♣' },  // Trèfle
+    bottomRight: { sym: '♦' },  // Carreau
+};
+
+// ── État ─────────────────────────────────────────────────────
+let running       = false;
+let startTs       = 0;
+let elapsedMs     = 0;
+let raf           = null;
+let suit          = null;   // famille sélectionnée
+let alreadyForced = false;  // force appliquée une seule fois par tour
+let txStart       = 0, tyStart = 0;
+
+// ── DOM ──────────────────────────────────────────────────────
+const mainTimeEl = document.getElementById('mainTime');
+const csEl       = document.getElementById('csTime');
+const startBtn   = document.getElementById('startBtn');
+const lapBtn     = document.getElementById('lapBtn');
+const timerZone  = document.getElementById('timerZone');
+
+// ── Formatage temps ───────────────────────────────────────────
+function format(ms) {
+    const s   = Math.floor(ms / 1000);
+    const min = Math.floor(s / 60);
+    const sec = s % 60;
+    const cs  = Math.floor((ms % 1000) / 10);
+    return {
+        main: `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`,
+        cs:   String(cs).padStart(2,'0')
+    };
+}
+
+// ── Centièmes forcés ──────────────────────────────────────────
+//  Logique :
+//    secondes affichées  →  valeur de la carte  (A=1 … R=13, cycle %13)
+//    famille secrète     →  couleur de la carte
+//    → on cherche la POSITION de cette carte dans le stack Mnemonica
+//    → c'est ce numéro de position qui est affiché en centièmes
+//
+//  Exemple : 8 secondes + Pique → 8♠ → position 20 → centièmes = 20
+//
+function forcedCs(ms, suitSym) {
+    if (!suitSym) return null;                 // pas de famille sélectionnée
+    const totalSec = Math.floor(ms / 1000);
+    if (totalSec < 1) return null;
+
+    // Valeur de la carte : secondes modulo 13 (1-13)
+    let val = totalSec % 13;
+    if (val === 0) val = 13;                   // 13, 26, 39 s… → Roi
+
+    // Recherche de la carte (valeur + famille) dans le stack
+    const pos = STACK.findIndex(c => c.v === val && c.s === suitSym);
+    if (pos === -1) return null;               // ne devrait pas arriver
+    return pos + 1;                            // position 1-52
+}
+
+// ── Boucle d'affichage ────────────────────────────────────────
+function tick() {
+    elapsedMs = performance.now() - startTs;
+    const d   = format(elapsedMs);
+    mainTimeEl.textContent = d.main;
+    csEl.textContent       = d.cs;
+    raf = requestAnimationFrame(tick);
+}
+
+// ── État du bouton Réinitialiser ──────────────────────────────
+//  Blanc uniquement si le chrono a tourné (elapsedMs > 0)
+//  La sélection de famille ne change PAS l'apparence du bouton
+function refreshResetBtn() {
+    lapBtn.classList.toggle('on', elapsedMs > 0);
+}
+
+// ── Démarrer ──────────────────────────────────────────────────
+function doStart() {
+    startTs = performance.now() - elapsedMs;
+    running = true;
+    startBtn.textContent = 'Arrêter';
+    startBtn.classList.add('stop-mode');
+    raf = requestAnimationFrame(tick);
+}
+
+// ── Arrêt forcé (tap spectateur ou bouton Arrêter) ────────────
+//    1er arrêt  → centièmes forcés sur la position Mnemonica
+//    Arrêts suivants (Reprendre puis stop) → centièmes naturels
+function doForceStop() {
+    cancelAnimationFrame(raf);
+    const d  = format(elapsedMs);
+    let csVal = d.cs; // valeur naturelle par défaut
+
+    if (!alreadyForced) {
+        const fc = forcedCs(elapsedMs, suit ? suit.sym : null);
+        if (fc !== null) {
+            csVal = String(fc).padStart(2, '0');
+            alreadyForced = true; // plus de force pour ce tour
+        }
+    }
+
+    mainTimeEl.textContent = d.main;
+    csEl.textContent = csVal;
+    running = false;
+    startBtn.textContent = 'Reprendre';
+    startBtn.classList.remove('stop-mode');
+    refreshResetBtn();
+}
+
+// ── Réinitialiser ─────────────────────────────────────────────
+function doReset() {
+    cancelAnimationFrame(raf);
+    running = false; elapsedMs = 0;
+    suit = null;
+    alreadyForced = false;          // réinitialise le verrou de force
+    mainTimeEl.textContent = '00:00';
+    csEl.textContent       = '00';
+    csEl.style.color       = '';    // retour au gris neutre
+    startBtn.textContent   = 'Démarrer';
+    startBtn.classList.remove('stop-mode');
+    lapBtn.classList.remove('on');
+}
+
+// ── Boutons ───────────────────────────────────────────────────
+startBtn.addEventListener('click', () => {
+    if (running) doForceStop(); else doStart();
+});
+lapBtn.addEventListener('click', () => {
+    doReset();
+});
+
+// ── Touch start : suivi global de la position ────────────────
+document.addEventListener('touchstart', e => {
+    txStart = e.touches[0].clientX;
+    tyStart = e.touches[0].clientY;
+}, { passive: true });
+
+// ── Force stop : tap sur la zone timer quand le chrono tourne ─
+//  stopPropagation empêche le listener document de se déclencher
+timerZone.addEventListener('touchend', e => {
+    if (!running) return;
+    e.preventDefault();
+    e.stopPropagation();
+    doForceStop();
+}, { passive: false });
+
+// ── Sélection famille : tap dans un coin, chrono arrêté ───────
+//  Listener sur document = couvre toute la hauteur de l'écran
+//  (y compris la zone boutons où timerZone ne capte pas)
+document.addEventListener('touchend', e => {
+    if (running) return;
+    if (e.target.closest('button')) return; // ignorer les boutons
+
+    const dx = e.changedTouches[0].clientX - txStart;
+    const dy = e.changedTouches[0].clientY - tyStart;
+    if (Math.hypot(dx, dy) >= 20) return;  // pas un tap, ignorer
+
+    const x = e.changedTouches[0].clientX;
+    const y = e.changedTouches[0].clientY;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const Z = Math.min(W, H) * 0.35; // 35% du plus petit côté
+
+    let detected = null;
+    if      (x < Z     && y < Z)     detected = SUITS.topLeft;
+    else if (x > W - Z && y < Z)     detected = SUITS.topRight;
+    else if (x < Z     && y > H - Z) detected = SUITS.bottomLeft;
+    else if (x > W - Z && y > H - Z) detected = SUITS.bottomRight;
+
+    if (detected) {
+        suit = detected;
+        csEl.style.color = '#fff'; // centièmes en blanc = famille active
+    }
+    // Tap au centre ou zone neutre → ignoré
+}, { passive: true });
+
+// ── Service worker (requis pour l'installation en PWA) ────────
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+}
+
+</script>
+</body>
+</html>
+
